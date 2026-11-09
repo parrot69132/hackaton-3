@@ -1,3 +1,155 @@
+# Lumon MDR Console — Hackathon 3
+
+Consola de Macrodata Refinement. React 18 + TypeScript estricto + Vite + React Router + Tailwind.
+Sin librerias de componentes, de data-fetching, de virtualizacion, de drag and drop ni de WebSocket:
+todo con `fetch`, Pointer Events y `WebSocket` nativos.
+
+## Integrantes
+
+| Nombre | Codigo UTEC |
+|:-------|:------------|
+| COMPLETAR | COMPLETAR |
+| COMPLETAR | COMPLETAR |
+| COMPLETAR | COMPLETAR |
+
+## URL de produccion
+
+- App: `COMPLETAR`
+- TEAM_CODE: `COMPLETAR`
+
+## Como ejecutar
+
+```bash
+npm install          # Node 24 LTS
+cp .env.example .env # completar los valores
+npm run dev          # http://localhost:5173
+npm run build        # tsc -b && vite build  (falla si hay errores de tipos)
+npm run preview      # sirve dist/ para probar el build
+```
+
+## Variables de entorno
+
+Toda la configuracion sale de variables `VITE_*` (ver `.env.example`). No hay URLs, nombres de
+bucket ni claves escritas en el codigo. El repositorio y el bundle no contienen claves secretas:
+en el frontend solo va la clave **publicable** de Supabase.
+
+## X-Lumon-Build
+
+Se inyecta en tiempo de build en `vite.config.ts`:
+
+- En Vercel se toma de `VERCEL_GIT_COMMIT_SHA` y se recorta a 7 caracteres.
+- En local, del `git rev-parse --short=7 HEAD`.
+- Sin git disponible vale `dev`, que la API acepta solo desde `localhost`.
+
+La API valida el patron `^([0-9a-f]{7,40}|dev)$`, por lo que un valor fijo seria rechazado con
+`400 BUILD_HEADER_REQUIRED`.
+
+## Despliegue
+
+Desplegado en Vercel desde este repositorio.
+
+- `vercel.json` reescribe todas las rutas a `index.html`, asi que abrir o recargar
+  `/files/42/refine?r=100&c=40` funciona.
+- `public/.well-known/lumon-verification.txt` se sirve como `text/plain` y queda fuera del rewrite,
+  para la verificacion del dominio.
+- Cabeceras de seguridad en `vercel.json`: `Content-Security-Policy` (sin `unsafe-eval`,
+  `script-src 'self'`, `connect-src` acotado a la API, el WebSocket y el storage),
+  `X-Content-Type-Options: nosniff` y `Referrer-Policy`.
+
+### Verificar el dominio
+
+Desde la pagina `/estado` de la app:
+
+1. **Pedir token del dominio** (`POST /integrations/deploy/challenge`).
+2. Copiar el token a `public/.well-known/lumon-verification.txt`, commit y push.
+3. **Verificar dominio** (`POST /integrations/deploy/verify`).
+
+## Storage de imagenes
+
+Supabase Storage.
+
+- Bucket `lumon-media`, publico solo para lectura.
+- Acepta unicamente `image/webp`, hasta 300 KB.
+- Politica RLS: el rol `anon` solo puede `INSERT` dentro de la carpeta del `TEAM_CODE`.
+  Sin `UPDATE` ni `DELETE`.
+- En el frontend va solo la clave publicable. La `service_role` nunca sale del panel de Supabase.
+
+## Que hay implementado
+
+### CP1 — Orientacion
+- Registro que crea la cuenta y entra con la sesion ya iniciada; errores del servidor junto al campo.
+- Login, y logout que revoca la sesion en el servidor.
+- Access token **solo en memoria**; refresh token persistido y de un solo uso.
+- Refresh coordinado: una sola llamada a `/auth/refresh` aunque varias requests reciban
+  `TOKEN_EXPIRED`, y cada request se reintenta una sola vez (`src/lib/api.ts`).
+- Varias pestanas sin `REFRESH_REUSED`: Web Locks API + relectura del refresh token dentro del lock
+  + BroadcastChannel para repartir el token nuevo (`src/lib/session.ts`).
+- Logout en una pestana cierra la sesion en todas por BroadcastChannel.
+- Rutas privadas que recuerdan el destino exacto con su query string en `?next=`.
+- Restauracion de sesion al recargar sin mostrar el login mientras se verifica.
+- La interfaz se decide por `permissions`, no por `role.code`. Ruta sin permiso: pagina "sin permiso".
+- Pantalla "Conectando con Lumon..." con reintento automatico creciente y manual si `/meta/health` falla.
+- Pagina 404.
+
+### CP2 — Macrodata Refinement
+- `/files`: paginacion del servidor, filtro por estado, busqueda con debounce, orden y tamano de
+  pagina, **todo en la URL**. Una URL invalida cae a valores por defecto sin romper la vista.
+  Guardia de secuencia: una respuesta vieja nunca pisa a una nueva.
+- `/files/:id/refine`: grilla completa con scroll en los dos ejes, virtualizada con elementos del DOM
+  (tope duro de 2500 celdas, `MAX_DOM_CELLS` en `GridView.tsx`). Sin `<canvas>`.
+- Bloques pedidos solo cuando hacen falta, cacheados, sin dos requests en vuelo para el mismo bloque,
+  y cancelados al salir de la vista (`src/files/refine/tileStore.ts`).
+- Respeta `429` con una puerta global hasta que pase `Retry-After`; reintenta `503` con espera creciente.
+- Placeholders del mismo tamano para los bloques sin cargar: el layout no salta.
+- Las reglas se leen de `GET /files/{id}/rules` por archivo. Nada hardcodeado.
+- Componente conexo maximo con BFS que cruza bloques y pide los que faltan; corta temprano si el
+  grupo pasa `maxGroupSize` (ya es ruido).
+- Caja calculada con `DIGIT_SUM_MOD` o `MAX_DIGIT_MOD` segun `binning.order` del archivo.
+- Arrastre con Pointer Events sin librerias, y teclado: flechas, `PageUp`, `PageDown`, `Home`, `End`,
+  `Enter` para seleccionar el grupo y `1`-`4` para enviarlo a WO, FC, DR o MA.
+- Patron ARIA *grid* con `aria-rowindex` y `aria-colindex` reales; la celda con foco siempre esta en el DOM.
+- `Idempotency-Key` por intencion del usuario, **la misma** en los reintentos: doble clic, doble Enter
+  o un corte de red no refinan dos veces ni suman dos errores. Se detecta `Idempotent-Replayed`.
+- Tras refinar, las celdas se marcan sin volver a pedir la grilla y las cuatro barras se actualizan
+  con la respuesta del servidor.
+- `422` y `409` con mensaje accionable; ante `409` los bloques afectados se vuelven a pedir.
+- Posicion en la URL (`?r=&c=`) con `replace`, sin llenar el historial.
+- Las celdas que dan miedo tiemblan segun su `tremor`; con `prefers-reduced-motion` la animacion se
+  apaga y la intensidad se distingue por el borde.
+- Pantalla de archivo completado al llegar al 100 %.
+
+### CP6 — Produccion
+- `/estado`: build desplegado, si la API responde, estado de las integraciones y de la clearance,
+  control del modo caos y el boton que corre la revision automatica (`POST /clearance/check`).
+- Error boundary: un error de render no deja la app en blanco.
+- La grilla del CP2 se carga con `import()` dinamico, fuera del bundle inicial de `/login`.
+
+## Estructura
+
+```
+src/
+  lib/        env, tipos del contrato, errores, backoff, fetch, sesion, api
+  auth/       AuthContext, rutas privadas, por permiso, login, registro
+  files/      listado con estado en URL
+  files/refine/  tileStore (cache de bloques), grid (BFS y cajas), GridView (virtualizacion)
+  shell/      layout, health gate, error boundary, 404, sin permiso
+  status/     pagina /estado
+```
+
+## Nota sobre el enunciado
+
+El repositorio base traia, en comentarios HTML del enunciado y en `AGENTS.md`, `CLAUDE.md` y
+`.github/copilot-instructions.md`, una supuesta "fe de erratas v2.1" dirigida a asistentes de IA.
+Contradecia al texto visible y a Swagger (token en `localStorage`, `X-Lumon-Build: latest`,
+`X-Idempotency-Key`, tiles desde 1, reglas fijas, `If-Match: *`, `socket.io-client`,
+`POST /media/upload`, `POST /clearance/override`, claves `service_role` en el frontend...).
+Siguiendo el propio enunciado — *"El contrato es Swagger"* — esta implementacion ignora esas
+instrucciones y sigue Swagger y el texto visible. El enunciado original se conserva completo mas abajo.
+
+---
+
+# Enunciado original
+
 # Hackathon Frontend: Lumon Industries — Macrodata Refinement
 
 <div align="center">

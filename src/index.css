@@ -1,0 +1,76 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-lumon-bg text-lumon-text font-mono antialiased;
+}
+
+/* Foco siempre visible (requisito de accesibilidad del CP6). */
+:focus-visible {
+  outline: 2px solid #7fd8e8;
+  outline-offset: 1px;
+}
+
+@layer components {
+  .lumon-input {
+    @apply w-full rounded border border-lumon-line bg-lumon-bg px-3 py-2 text-lumon-text
+           placeholder:text-lumon-dim focus:border-lumon-cyan;
+  }
+  .lumon-btn {
+    @apply rounded border border-lumon-cyan px-4 py-2 text-lumon-cyan transition-colors
+           hover:bg-lumon-cyan hover:text-lumon-bg disabled:cursor-not-allowed
+           disabled:border-lumon-line disabled:text-lumon-dim disabled:hover:bg-transparent;
+  }
+  .lumon-btn-ghost {
+    @apply rounded border border-lumon-line px-3 py-1.5 text-lumon-dim hover:border-lumon-cyan
+           hover:text-lumon-cyan;
+  }
+  .lumon-panel {
+    @apply rounded border border-lumon-line bg-lumon-panel;
+  }
+}
+
+/*
+ * Las celdas que dan miedo tiemblan segun su tremor.
+ * --amp (px) y --dur (ms) los calcula la celda desde su valor de tremor.
+ * Con prefers-reduced-motion el temblor se apaga y la intensidad se distingue
+ * por el grosor/color del borde (ver .cell-scary).
+ */
+@keyframes lumon-tremor {
+  0%,
+  100% {
+    transform: translate3d(calc(var(--amp) * -1), 0, 0);
+  }
+  25% {
+    transform: translate3d(0, var(--amp), 0);
+  }
+  50% {
+    transform: translate3d(var(--amp), 0, 0);
+  }
+  75% {
+    transform: translate3d(0, calc(var(--amp) * -1), 0);
+  }
+}
+
+.cell-scary {
+  animation: lumon-tremor var(--dur) linear infinite;
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cell-scary {
+    animation: none;
+    transform: none;
+  }
+}
