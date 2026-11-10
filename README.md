@@ -14,8 +14,9 @@ todo con `fetch`, Pointer Events y `WebSocket` nativos.
 
 ## URL de produccion
 
-- App: `COMPLETAR`
-- TEAM_CODE: `COMPLETAR`
+- App: https://hackaton-3-phi-six.vercel.app
+- Repositorio: https://github.com/parrot69132/hackaton-3
+- TEAM_CODE: `TEAM-061`
 
 ## Como ejecutar
 

@@ -8,6 +8,8 @@ import { Spinner } from '../../shell/Spinner';
 import { GridView, type GridViewHandle } from './GridView';
 import { TileStore } from './tileStore';
 import { findGroup, type GroupResult } from './grid';
+import { FloorSocket, type FloorState } from '../../lib/realtime/floorSocket';
+import { eventStream, type LumonEvent } from '../../lib/realtime/eventStream';
 
 const BIN_NAME: Record<Bin, string> = {
   WO: 'WO · Woe',
@@ -33,6 +35,17 @@ function newIdempotencyKey(): string {
 function intentionId(bin: Bin, cells: readonly Cell[]): string {
   const sorted = cells.map((c) => `${c.r},${c.c}`).sort();
   return `${bin}|${sorted.join(';')}`;
+}
+
+function detailHolder(e: unknown): string | null {
+  if (!(e instanceof ApiError) || typeof e.details !== 'object' || e.details === null) return null;
+  const holder = (e.details as Record<string, unknown>)['holder'];
+  if (typeof holder === 'string') return holder;
+  if (typeof holder === 'object' && holder !== null) {
+    const name = (holder as Record<string, unknown>)['displayName'];
+    if (typeof name === 'string') return name;
+  }
+  return null;
 }
 
 function detailReason(e: unknown): string | null {
@@ -82,6 +95,9 @@ export function RefinePage(): React.JSX.Element {
   const idempotencyKeys = useRef(new Map<string, string>());
   const [drag, setDrag] = useState<{ x: number; y: number } | null>(null);
 
+  const floorRef = useRef<FloorSocket | null>(null);
+  const [floor, setFloor] = useState<FloorState | null>(null);
+
   // --- Carga del archivo y de SUS reglas (nunca valores fijos) ---
   useEffect(() => {
     if (!Number.isInteger(fileId) || fileId < 1) {
@@ -108,10 +124,20 @@ export function RefinePage(): React.JSX.Element {
     return () => ctrl.abort();
   }, [fileId, reloadToken]);
 
-  // --- Store de bloques, uno por archivo ---
+  /**
+   * Store de bloques, uno por archivo. Depende SOLO de la identidad y la
+   * geometria del archivo: si dependiera del objeto `file` completo, cada
+   * refinamiento (que actualiza el progreso) tiraria el cache de bloques y
+   * los volveria a pedir todos.
+   */
+  const fileKey = file === null ? null : file.id;
+  const fileTileSize = file?.tileSize ?? 0;
+  const fileRows = file?.rows ?? 0;
+  const fileCols = file?.cols ?? 0;
+
   useEffect(() => {
-    if (file === null) return undefined;
-    const store = new TileStore(file.id, file.tileSize, file.rows, file.cols, () => {
+    if (fileKey === null) return undefined;
+    const store = new TileStore(fileKey, fileTileSize, fileRows, fileCols, () => {
       setStoreVersion((v) => v + 1);
     });
     storeRef.current = store;
@@ -120,7 +146,64 @@ export function RefinePage(): React.JSX.Element {
       store.dispose();
       storeRef.current = null;
     };
-  }, [file]);
+  }, [fileKey, fileTileSize, fileRows, fileCols]);
+
+  // --- Piso compartido: una conexion por pestana mientras la grilla esta abierta ---
+  // Tambien depende solo del id: no se reconecta en cada refinamiento.
+  useEffect(() => {
+    if (fileKey === null) return undefined;
+    const socket = new FloorSocket(fileKey);
+    floorRef.current = socket;
+    const off = socket.subscribe(setFloor);
+    void socket.connect();
+    return () => {
+      off();
+      socket.dispose();
+      floorRef.current = null;
+      setFloor(null);
+    };
+  }, [fileKey]);
+
+  // --- Eventos del stream aplicados a esta vista, sin recargar ---
+  useEffect(() => {
+    if (fileKey === null) return undefined;
+    const onEvent = (event: LumonEvent): void => {
+      const eventFileId = event.data['fileId'];
+      if (typeof eventFileId === 'number' && eventFileId !== fileKey) return;
+
+      if (event.type === 'refinement.created') {
+        const cells = event.data['cells'];
+        const bin = event.data['bin'];
+        const store = storeRef.current;
+        if (
+          store !== null &&
+          Array.isArray(cells) &&
+          (bin === 'WO' || bin === 'FC' || bin === 'DR' || bin === 'MA')
+        ) {
+          const parsed: Cell[] = [];
+          for (const raw of cells) {
+            if (typeof raw === 'object' && raw !== null) {
+              const rec = raw as Record<string, unknown>;
+              if (typeof rec['r'] === 'number' && typeof rec['c'] === 'number') {
+                parsed.push({ r: rec['r'], c: rec['c'] });
+              }
+            }
+          }
+          if (parsed.length > 0) store.applyRefinement(parsed, bin);
+        }
+        const prog = event.data['progress'];
+        if (typeof prog === 'object' && prog !== null) {
+          setProgress(prog as Progress);
+        }
+        return;
+      }
+
+      if (event.type === 'file.completed') {
+        setFile((prev) => (prev === null ? prev : { ...prev, status: 'COMPLETE' }));
+      }
+    };
+    return eventStream.subscribe(onEvent);
+  }, [fileKey]);
 
   // Posicion inicial desde la URL (?r=&c=): abrirla lleva directo ahi.
   const appliedInitial = useRef(false);
@@ -188,6 +271,8 @@ export function RefinePage(): React.JSX.Element {
             return;
           }
           setSelection(group);
+          // Antes de llevar un grupo a una caja se RESERVA en el piso.
+          if (group.noise === null) floorRef.current?.claim(cell);
           if (group.noise === 'TOO_SMALL') {
             setNotice({
               kind: 'info',
@@ -264,6 +349,7 @@ export function RefinePage(): React.JSX.Element {
                 },
           );
           setSelection(null);
+          floorRef.current?.release();
           idempotencyKeys.current.delete(intention);
           setNotice({
             kind: 'ok',
@@ -272,7 +358,14 @@ export function RefinePage(): React.JSX.Element {
               : `Grupo de ${outcome.result.size} celdas enviado a ${bin}.`,
           });
         } catch (e) {
-          if (e instanceof ApiError && e.status === 409) {
+          if (e instanceof ApiError && e.code === 'GROUP_CLAIMED') {
+            const holder = detailHolder(e);
+            setNotice({
+              kind: 'error',
+              text: `Ese grupo lo tiene reservado ${holder ?? 'otro refinador'}. Espera a que lo libere o elige otro.`,
+            });
+            idempotencyKeys.current.delete(intention);
+          } else if (e instanceof ApiError && e.status === 409) {
             // Alguien refino antes: los bloques afectados se vuelven a pedir.
             store.invalidateForCells(current.cells);
             setSelection(null);
@@ -496,6 +589,82 @@ export function RefinePage(): React.JSX.Element {
         </p>
       ) : null}
 
+      {/* Piso compartido: presentes, reservas y estado de la conexion */}
+      {floor !== null ? (
+        <section
+          aria-label="Piso compartido"
+          className="lumon-panel mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 p-3 text-xs"
+        >
+          <span className="flex items-center gap-1.5">
+            <span
+              aria-hidden="true"
+              className={`h-2 w-2 rounded-full ${
+                floor.status === 'open'
+                  ? 'bg-lumon-wo'
+                  : floor.status === 'retrying'
+                    ? 'bg-lumon-ma'
+                    : 'bg-lumon-dr'
+              }`}
+            />
+            <span role="status">
+              piso:{' '}
+              {floor.status === 'open'
+                ? 'conectado'
+                : floor.status === 'retrying'
+                  ? 'reconectando'
+                  : floor.status === 'connecting'
+                    ? 'conectando'
+                    : 'sin conexion'}
+            </span>
+          </span>
+
+          {floor.members.length > 0 ? (
+            <span className="text-lumon-dim">
+              En el piso:{' '}
+              {floor.members.map((m) => (
+                <button
+                  key={m.userId}
+                  type="button"
+                  className="mr-2 underline decoration-dotted underline-offset-2 hover:text-lumon-cyan"
+                  onClick={() => {
+                    if (m.cursor !== null) {
+                      setFocus(m.cursor);
+                      setFocusRequest((n) => n + 1);
+                    }
+                  }}
+                  title={
+                    m.cursor !== null
+                      ? `Ir a la posicion de ${m.displayName}`
+                      : `${m.displayName} sin posicion conocida`
+                  }
+                >
+                  {m.displayName}
+                  {m.cursor !== null ? ` (${m.cursor.r + 1},${m.cursor.c + 1})` : ''}
+                </button>
+              ))}
+            </span>
+          ) : null}
+
+          {floor.myClaimId !== null ? (
+            <span className="text-lumon-wo">grupo reservado por ti</span>
+          ) : null}
+
+          {floor.lastDenial !== null ? (
+            <span role="alert" className="text-lumon-dr">
+              {floor.lastDenial.reason === 'HELD'
+                ? `Reservado por ${floor.lastDenial.holder ?? 'otro refinador'}.`
+                : 'La celda elegida no forma un grupo reservable.'}
+            </span>
+          ) : null}
+
+          {floor.fatal !== null ? (
+            <span role="alert" className="text-lumon-dr">
+              {floor.fatal} Puedes seguir refinando igual.
+            </span>
+          ) : null}
+        </section>
+      ) : null}
+
       <div className="mt-3">
         <GridView
           store={store}
@@ -508,6 +677,7 @@ export function RefinePage(): React.JSX.Element {
           onFocusChange={(cell) => {
             setFocus(cell);
             setFocusRequest((n) => n + 1);
+            floorRef.current?.moveCursor(cell);
           }}
           onActivate={activate}
           onPosition={onPosition}

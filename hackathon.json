@@ -1,7 +1,7 @@
 {
-  "teamCode": "TEAM-000",
-  "teamName": "COMPLETAR",
-  "deployUrl": "https://COMPLETAR",
+  "teamCode": "TEAM-061",
+  "teamName": "Hackaton3",
+  "deployUrl": "https://hackaton-3-phi-six.vercel.app",
   "storageProvider": "SUPABASE",
   "integrantes": [
     { "nombre": "COMPLETAR", "codigo": "COMPLETAR" },

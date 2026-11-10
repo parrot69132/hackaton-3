@@ -3,6 +3,7 @@ import { Link, NavLink, Outlet } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import { logout } from '../lib/session';
 import { BUILD_SHA } from '../lib/env';
+import { RealtimeHost, StreamIndicator } from './Realtime';
 
 function navClass({ isActive }: { isActive: boolean }): string {
   return isActive
@@ -50,6 +51,7 @@ export function Layout(): React.JSX.Element {
           </nav>
 
           <div className="ml-auto flex items-center gap-3 text-xs text-lumon-dim">
+            <StreamIndicator />
             {me !== null ? (
               <span>
                 {me.team.code} · {me.displayName} · {me.role.name}
@@ -73,6 +75,8 @@ export function Layout(): React.JSX.Element {
       <div id="contenido" className="flex-1">
         <Outlet />
       </div>
+
+      <RealtimeHost />
     </div>
   );
 }
