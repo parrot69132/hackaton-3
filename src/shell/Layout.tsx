@@ -45,6 +45,11 @@ export function Layout(): React.JSX.Element {
                 Archivos
               </NavLink>
             ) : null}
+            {can('refiners:read') ? (
+              <NavLink to="/refiners" className={navClass}>
+                Expedientes
+              </NavLink>
+            ) : null}
             <NavLink to="/estado" className={navClass}>
               Estado
             </NavLink>

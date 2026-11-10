@@ -15,6 +15,14 @@ const RefinePage = lazy(async () => {
   const mod = await import('./files/refine/RefinePage');
   return { default: mod.RefinePage };
 });
+const RefinersPage = lazy(async () => {
+  const mod = await import('./refiners/RefinersPage');
+  return { default: mod.RefinersPage };
+});
+const RefinerEditPage = lazy(async () => {
+  const mod = await import('./refiners/RefinerEditPage');
+  return { default: mod.RefinerEditPage };
+});
 
 export function App(): React.JSX.Element {
   return (
@@ -34,6 +42,28 @@ export function App(): React.JSX.Element {
               element={
                 <Suspense fallback={<Spinner label="Abriendo el archivo…" />}>
                   <RefinePage />
+                </Suspense>
+              }
+            />
+          </Route>
+
+          <Route element={<RequirePermission permission="refiners:read" />}>
+            <Route
+              path="/refiners"
+              element={
+                <Suspense fallback={<Spinner label="Abriendo el directorio…" />}>
+                  <RefinersPage />
+                </Suspense>
+              }
+            />
+          </Route>
+
+          <Route element={<RequirePermission permission="refiners:write" />}>
+            <Route
+              path="/refiners/:id/edit"
+              element={
+                <Suspense fallback={<Spinner label="Abriendo el expediente…" />}>
+                  <RefinerEditPage />
                 </Suspense>
               }
             />

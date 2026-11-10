@@ -18,6 +18,10 @@ import type {
   Bin,
   Cell,
   FileStatus,
+  Department,
+  Refiner,
+  RefinerPage,
+  RefinerPatch,
 } from './types';
 
 export type ApiOptions = Omit<RawOptions, 'accessToken'>;
@@ -216,4 +220,64 @@ export async function setChaos(level: 0 | 1 | 2, signal?: AbortSignal): Promise<
     retries: 0,
   });
   return res.data;
+}
+
+// ---------- Expedientes (CP4 directorio / CP5 Regla de Milchick) ----------
+
+export interface RefinersQuery {
+  page: number;
+  size: PageSize;
+  departmentId: number | null;
+  q: string;
+}
+
+export async function listDepartments(signal?: AbortSignal): Promise<Department[]> {
+  const res = await apiFetch<Department[]>('/departments', { signal });
+  return res.data;
+}
+
+export async function listRefiners(
+  query: RefinersQuery,
+  signal?: AbortSignal,
+): Promise<RefinerPage> {
+  const p = new URLSearchParams();
+  p.set('page', String(query.page));
+  p.set('size', String(query.size));
+  if (query.departmentId !== null) p.set('departmentId', String(query.departmentId));
+  if (query.q !== '') p.set('q', query.q);
+  const res = await apiFetch<RefinerPage>(`/refiners?${p.toString()}`, { signal });
+  return res.data;
+}
+
+export interface RefinerWithTag {
+  refiner: Refiner;
+  /** Valor exacto del ETag: hace falta para el If-Match del PATCH. */
+  etag: string | null;
+}
+
+export async function getRefiner(id: number, signal?: AbortSignal): Promise<RefinerWithTag> {
+  const res = await apiFetch<Refiner>(`/refiners/${id}`, { signal });
+  return { refiner: res.data, etag: res.headers.get('ETag') };
+}
+
+/**
+ * Regla de Milchick: nunca se sobrescribe lo que no se ha leido.
+ * El PATCH exige `If-Match` con el ETag EXACTO que devolvio el GET.
+ * Nada de `If-Match: *` (la API responde 400) ni de reintentos silenciosos
+ * con el ETag nuevo: ante 412 se le muestra el conflicto al usuario.
+ */
+export async function patchRefiner(
+  id: number,
+  patch: RefinerPatch,
+  etag: string,
+  signal?: AbortSignal,
+): Promise<RefinerWithTag> {
+  const res = await apiFetch<Refiner>(`/refiners/${id}`, {
+    method: 'PATCH',
+    body: patch,
+    headers: { 'If-Match': etag },
+    signal,
+    retries: 0,
+  });
+  return { refiner: res.data, etag: res.headers.get('ETag') };
 }

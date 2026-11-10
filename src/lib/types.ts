@@ -221,3 +221,44 @@ export interface DeployChallenge {
   wellKnownPath: string;
   expiresAt: string;
 }
+
+export interface Department {
+  id: number;
+  code: string;
+  name: string;
+}
+
+export interface Badge {
+  url: string;
+  width: number;
+  height: number;
+}
+
+export interface Refiner {
+  id: number;
+  fullName: string;
+  department: Department;
+  title: string;
+  extension: string;
+  /** Texto del exterior: puede traer HTML. Se muestra SIEMPRE como texto. */
+  bio: string;
+  profileUrl: string | null;
+  badge: Badge | null;
+  version: number;
+  updatedAt: string;
+}
+
+export interface RefinerPage {
+  content: Refiner[];
+  totalElements: number;
+  totalPages: number;
+  page: number;
+  size: PageSize;
+}
+
+export interface RefinerPatch {
+  title?: string;
+  extension?: string;
+  bio?: string;
+  departmentId?: number;
+}
